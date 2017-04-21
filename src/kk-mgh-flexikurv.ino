@@ -1,12 +1,9 @@
 #include <TinyWireM.h>
 
-#define LED_LEFT 0
-#define LED_MIDDLE 1
-#define LED_RIGHT 2
-
 #define USE_SERIAL
 //#define USE_LSM303
 #define USE_L3GD20
+
 
 #ifdef USE_SERIAL
 	#include <SoftwareSerial.h>
@@ -25,15 +22,25 @@
 	Adafruit_L3GD20_Unified l3gd20_gyro = Adafruit_L3GD20_Unified( 20 );
 #endif
 
+#define LED_LEFT 0
+#define LED_MIDDLE 1
+#define LED_RIGHT 2
+
+#define ON_OFF_PIN 3
+
+#define POWER_STATE_ON true
+#define POWER_STATE_OFF false
+
+bool powerState = POWER_STATE_OFF;
+bool buttonChanged = false;
+
 void setup() {
 
 	pinMode( LED_LEFT , OUTPUT );
 	pinMode( LED_MIDDLE , OUTPUT );
 	pinMode( LED_RIGHT , OUTPUT );
 
-	switchLEDs( HIGH , HIGH , HIGH );
-	delay( 500 );
-	switchLEDs( LOW , LOW , LOW );
+	pinMode( ON_OFF_PIN , INPUT_PULLUP );
 
 	#ifdef USE_SERIAL
 	  	softSerial.begin(9600);
@@ -72,45 +79,72 @@ void setup() {
 // the loop function runs over and over again forever
 void loop() {
 
-	#if defined( USE_LSM303 ) || defined( USE_L3GD20 )
-		sensors_event_t event;
-	#endif
+	if( powerState == POWER_STATE_ON ) {
 
-	#ifdef USE_LSM303
-
-    	lsm303_accel.getEvent(&event);
-
-    	#ifdef USE_SERIAL
-			softSerial.print( "X Raw: " ); softSerial.print( lsm303_accel.raw.x ); softSerial.print( "  " );
-			softSerial.print( "Y Raw: " ); softSerial.print( lsm303_accel.raw.y ); softSerial.print( "  " );
-			softSerial.print( "Z Raw: " ); softSerial.print( lsm303_accel.raw.z ); softSerial.println( "" );
-
-	    	softSerial.print( " -- X: " ); softSerial.print( event.acceleration.x ); softSerial.print( "  " );
-	    	softSerial.print( "Y: " ); softSerial.print( event.acceleration.y ); softSerial.print( "  " );
-	    	softSerial.print( "Z: " ); softSerial.print( event.acceleration.z ); softSerial.print( "  " );
-			softSerial.println( "m/s^2 " );
-
-			delay( 500 );
+		#if defined( USE_LSM303 ) || defined( USE_L3GD20 )
+			sensors_event_t event;
 		#endif
-	#endif
 
-	#ifdef USE_L3GD20
-    	l3gd20_gyro.getEvent(&event);
+		#ifdef USE_LSM303
 
-    	#ifdef USE_SERIAL
-			softSerial.print( "X: " ); softSerial.print( event.gyro.x ); softSerial.print( "  " );
-  			softSerial.print( "Y: " ); softSerial.print( event.gyro.y ); softSerial.print( "  " );
-  			softSerial.print( "Z: " ); softSerial.print( event.gyro.z ); softSerial.print( "  " );
-  			softSerial.println("rad/s ");
+	    	lsm303_accel.getEvent(&event);
 
-			delay( 500 );
+	    	#ifdef USE_SERIAL
+				softSerial.print( "X Raw: " ); softSerial.print( lsm303_accel.raw.x ); softSerial.print( "  " );
+				softSerial.print( "Y Raw: " ); softSerial.print( lsm303_accel.raw.y ); softSerial.print( "  " );
+				softSerial.print( "Z Raw: " ); softSerial.print( lsm303_accel.raw.z ); softSerial.println( "" );
+
+		    	softSerial.print( " -- X: " ); softSerial.print( event.acceleration.x ); softSerial.print( "  " );
+		    	softSerial.print( "Y: " ); softSerial.print( event.acceleration.y ); softSerial.print( "  " );
+		    	softSerial.print( "Z: " ); softSerial.print( event.acceleration.z ); softSerial.print( "  " );
+				softSerial.println( "m/s^2 " );
+
+				delay( 500 );
+			#endif
 		#endif
-	#endif
 
+		#ifdef USE_L3GD20
+	    	l3gd20_gyro.getEvent(&event);
+
+	    	#ifdef USE_SERIAL
+				softSerial.print( "X: " ); softSerial.print( event.gyro.x ); softSerial.print( "  " );
+	  			softSerial.print( "Y: " ); softSerial.print( event.gyro.y ); softSerial.print( "  " );
+	  			softSerial.print( "Z: " ); softSerial.print( event.gyro.z ); softSerial.print( "  " );
+	  			softSerial.println("rad/s ");
+
+				delay( 500 );
+			#endif
+		#endif
+	}
+
+	if( digitalRead( ON_OFF_PIN ) == 0 && buttonChanged == false ) {
+		buttonChanged = true;
+	} else if( digitalRead( ON_OFF_PIN ) == 1 && buttonChanged == true ) {
+		buttonChanged = false;
+		if( powerState == POWER_STATE_OFF ) {
+			#ifdef USE_SERIAL
+				softSerial.println( "Turned ON" );
+			#endif
+			powerState = POWER_STATE_ON;
+
+			switchLEDs( HIGH , HIGH , HIGH ); delay( 300 );
+			switchLEDs( LOW , HIGH , LOW ); delay( 300 );
+
+			switchLEDs( HIGH , HIGH , HIGH ); delay( 300 );
+			switchLEDs( LOW , HIGH , LOW );
+
+		} else {
+			#ifdef USE_SERIAL
+				softSerial.println( "Turned OFF" );
+			#endif
+			powerState = POWER_STATE_OFF;
+			switchLEDs( LOW , LOW , LOW );
+		}
+	}
 }
 
 void switchLEDs( bool leftLED , bool middleLED , bool rightLED ) {
 	digitalWrite( LED_LEFT, leftLED );
 	digitalWrite( LED_MIDDLE , middleLED );
-	digitalWrite( LED_MIDDLE , rightLED );
+	digitalWrite( LED_RIGHT , rightLED );
 }
