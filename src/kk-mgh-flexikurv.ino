@@ -1,44 +1,47 @@
 #include <TinyWireM.h>
 
-#define USE_SERIAL
-//#define USE_LSM303
-#define USE_L3GD20
-
+//#define USE_SERIAL
 
 #ifdef USE_SERIAL
 	#include <SoftwareSerial.h>
 	SoftwareSerial softSerial( 9 , 10 );
+	unsigned long serialHelper = 0;
 #endif
 
-#ifdef USE_LSM303
-	#include <Adafruit_Sensor.h>
-	#include <Adafruit_LSM303.h>
-	Adafruit_LSM303_Accel_Unified lsm303_accel = Adafruit_LSM303_Accel_Unified(54321);
-#endif
+#include <Adafruit_Sensor.h>
+#include <Adafruit_L3GD20.h>
+Adafruit_L3GD20_Unified l3gd20_gyro = Adafruit_L3GD20_Unified( 20 );
 
-#ifdef USE_L3GD20
-	#include <Adafruit_Sensor.h>
-	#include <Adafruit_L3GD20.h>
-	Adafruit_L3GD20_Unified l3gd20_gyro = Adafruit_L3GD20_Unified( 20 );
-#endif
-
-#define LED_LEFT 0
-#define LED_MIDDLE 1
-#define LED_RIGHT 2
+#define LIGHT_LEFT 0
+#define LIGHT_MIDDLE 1
+#define LIGHT_RIGHT 2
 
 #define ON_OFF_PIN 3
 
 #define POWER_STATE_ON true
 #define POWER_STATE_OFF false
 
+#define GYRO_THRESHOLD_ACTION 10
+#define GYRO_THRESHOLD_LEFT -65.0
+#define GYRO_THRESHOLD_LEFT_MAX -300.0
+
+#define GYRO_THRESHOLD_RIGHT 65.0
+#define GYRO_THRESHOLD_RIGHT_MAX 300.0
+
 bool powerState = POWER_STATE_OFF;
 bool buttonChanged = false;
 
+float gyroAbsoluteRotation = 0;
+float gyroAbsoluteRotationPrevious = 0;
+
+unsigned long gyroPositionResetTimer = 0;
+bool gyroPositionReset = true;
+
 void setup() {
 
-	pinMode( LED_LEFT , OUTPUT );
-	pinMode( LED_MIDDLE , OUTPUT );
-	pinMode( LED_RIGHT , OUTPUT );
+	pinMode( LIGHT_LEFT , OUTPUT );
+	pinMode( LIGHT_MIDDLE , OUTPUT );
+	pinMode( LIGHT_RIGHT , OUTPUT );
 
 	pinMode( ON_OFF_PIN , INPUT_PULLUP );
 
@@ -47,80 +50,94 @@ void setup() {
 		softSerial.println( "FlexiKurv Prototype" );
 	#endif
 
-	#ifdef USE_LSM303
-		#ifdef USE_SERIAL
-			softSerial.println( "Use LSM303 Accelerometer" );
-		#endif
-
-		if( !lsm303_accel.begin() ) {
-			#ifdef USE_SERIAL
-				softSerial.println("No LSM303 detected!");
-			#endif
-			while( true );
-		}
+	#ifdef USE_SERIAL
+		softSerial.println( "Use L3GD20 Gyroscope" );
 	#endif
 
-	#ifdef USE_L3GD20
+	l3gd20_gyro.enableAutoRange(true);
+	if( !l3gd20_gyro.begin() ) {
 		#ifdef USE_SERIAL
-			softSerial.println( "Use L3GD20 Gyroscope" );
+			softSerial.println("No L3GD20 detected!");
 		#endif
+	} else {
+		#ifdef USE_SERIAL
+			softSerial.println("L3GD20 detected!");
+		#endif
+	}
 
-		l3gd20_gyro.enableAutoRange(true);
-		if( !l3gd20_gyro.begin() ) {
-			#ifdef USE_SERIAL
-				softSerial.println("No L3GD20 detected!");
-			#endif
-			while( true );
-		}
+	#ifdef USE_SERIAL
+		serialHelper = millis();
 	#endif
-
 }
 
 // the loop function runs over and over again forever
 void loop() {
 
+	// Position/Drehung nur prüfen, wenn "eingeschaltet"
 	if( powerState == POWER_STATE_ON ) {
 
-		#if defined( USE_LSM303 ) || defined( USE_L3GD20 )
-			sensors_event_t event;
-		#endif
+		sensors_event_t event;
 
-		#ifdef USE_LSM303
+	    l3gd20_gyro.getEvent(&event);
 
-	    	lsm303_accel.getEvent(&event);
+		// Momentane Rotation/Position ermitteln bzw. momentane Änderungen aufsummieren
+		gyroAbsoluteRotationPrevious = gyroAbsoluteRotation;
+		if( event.gyro.z > 0.02 || event.gyro.z < -0.02 ) gyroAbsoluteRotation += event.gyro.z;
 
-	    	#ifdef USE_SERIAL
-				softSerial.print( "X Raw: " ); softSerial.print( lsm303_accel.raw.x ); softSerial.print( "  " );
-				softSerial.print( "Y Raw: " ); softSerial.print( lsm303_accel.raw.y ); softSerial.print( "  " );
-				softSerial.print( "Z Raw: " ); softSerial.print( lsm303_accel.raw.z ); softSerial.println( "" );
+		// Momentane Rotation/Position auf 0 zurücksetzen, wenn sich innerhalb eines bestimmten Zeitraums nichts geänder hat
+		if( abs( gyroAbsoluteRotation - gyroAbsoluteRotationPrevious ) < GYRO_THRESHOLD_ACTION ) {
+			if( gyroPositionReset == false ) gyroPositionResetTimer = millis();
+			gyroPositionReset = true;
+		} else {
+			gyroPositionReset = false;
+		}
 
-		    	softSerial.print( " -- X: " ); softSerial.print( event.acceleration.x ); softSerial.print( "  " );
-		    	softSerial.print( "Y: " ); softSerial.print( event.acceleration.y ); softSerial.print( "  " );
-		    	softSerial.print( "Z: " ); softSerial.print( event.acceleration.z ); softSerial.print( "  " );
-				softSerial.println( "m/s^2 " );
+		// Bei einer Drehung nach Rechts und dem dem überschreiten des Schwellwerts (~25°) die Lampe zuschalten
+		if( gyroAbsoluteRotation > GYRO_THRESHOLD_RIGHT && gyroAbsoluteRotation < GYRO_THRESHOLD_RIGHT_MAX ) {
+			switchLEDs( HIGH , HIGH , LOW );
+			gyroPositionReset = false;
+		// Bei einer Drehung nach Links und dem dem überschreiten des Schwellwerts (~25°) die Lampe zuschalten
+		} else if( gyroAbsoluteRotation < GYRO_THRESHOLD_LEFT && gyroAbsoluteRotation > GYRO_THRESHOLD_LEFT_MAX ) {
+			switchLEDs( LOW , HIGH , HIGH );
+			gyroPositionReset = false;
+		// Wenn der Lenker wieder in die Mitte gedreht wird die beiden äußeren Lampen abschalten
+		} else if( gyroAbsoluteRotation > -20.0 && gyroAbsoluteRotation < 20.0 ) {
+			switchLEDs( LOW , HIGH , LOW );
+			if( gyroPositionReset == false ) gyroPositionResetTimer = millis();
+			gyroPositionReset = true;
+		}
 
-				delay( 500 );
-			#endif
-		#endif
+		// Momentane Rotation/Position auf 0 zurücksetzen, wenn
+		///  - diese sich innerhalb eines bestimmten Zeitraums nichts geänder hat oder
+		//   - der Lenker wieder in die Mitte gedreht wurde
+		if( gyroPositionReset == true ) {
+			if( ( millis() - gyroPositionResetTimer ) > 10000 ) {
+				#ifdef USE_SERIAL
+					softSerial.println( "Reset Gyro Absolute Position" );
+				#endif
+				gyroAbsoluteRotation = 0.0;
+				gyroPositionReset = false;
+			}
+		}
 
-		#ifdef USE_L3GD20
-	    	l3gd20_gyro.getEvent(&event);
-
-	    	#ifdef USE_SERIAL
+	    #ifdef USE_SERIAL
+			if( ( millis() - serialHelper ) > 500 ) {
 				softSerial.print( "X: " ); softSerial.print( event.gyro.x ); softSerial.print( "  " );
 	  			softSerial.print( "Y: " ); softSerial.print( event.gyro.y ); softSerial.print( "  " );
 	  			softSerial.print( "Z: " ); softSerial.print( event.gyro.z ); softSerial.print( "  " );
+				softSerial.print( "Ztot: " ); softSerial.print( gyroAbsoluteRotation ); softSerial.print( "  " );
 	  			softSerial.println("rad/s ");
-
-				delay( 500 );
-			#endif
+				serialHelper = millis();
+			}
 		#endif
 	}
 
+	// Licht ein- bzw. ausschalten
 	if( digitalRead( ON_OFF_PIN ) == 0 && buttonChanged == false ) {
 		buttonChanged = true;
 	} else if( digitalRead( ON_OFF_PIN ) == 1 && buttonChanged == true ) {
 		buttonChanged = false;
+
 		if( powerState == POWER_STATE_OFF ) {
 			#ifdef USE_SERIAL
 				softSerial.println( "Turned ON" );
@@ -144,7 +161,7 @@ void loop() {
 }
 
 void switchLEDs( bool leftLED , bool middleLED , bool rightLED ) {
-	digitalWrite( LED_LEFT, leftLED );
-	digitalWrite( LED_MIDDLE , middleLED );
-	digitalWrite( LED_RIGHT , rightLED );
+	digitalWrite( LIGHT_LEFT, leftLED );
+	digitalWrite( LIGHT_MIDDLE , middleLED );
+	digitalWrite( LIGHT_RIGHT , rightLED );
 }
